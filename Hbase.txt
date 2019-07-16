@@ -1,0 +1,249 @@
+﻿
+浏览器访问hbase配置：http://192.168.235.153:16010/master-status
+
+hbase	hmaster-----------------hadoop namenode
+hbase	hregion-----------------hadoop datanode
+配置文件写了哪些机器，这个机器就有哪些参与
+
+
+
+HBase是一个高可靠、高性能、面向列、可伸缩的分布式存储系统，利用HBase技术可在廉价的PC Server上搭建大规模结构化存储集群。
+---------------------
+hash：简单的说就是一种将任意长度的消息压缩到某一固定长度的消息摘要的函数。
+
+离线：
+	快速的查询某一个url是否存在？布隆过滤器-----位存储，以数组的形式
+	跳表结构：建索引，建多级索引
+	hbase：布隆过滤器+跳表，每个索引范围的数据存储在不同节点上
+1：布隆过滤器：它实际上是一个很长的二进制向量和一系列随机映射函数。布隆过滤器可以用于检索一个元素是否在一个集合中。它的优点是空间效率和查询时间都比一般的算法要好的多，缺点是有一定的误识别率和删除困难。
+
+2：原始数据hdfs：
+	1）索引存储在hdfs
+	2）顶级索引：在hdfs上：各个节点都可以访问
+	3）需要一个能够记录顶级索引存储地点的，这个叫做你的索引入口
+	4）zookeeper存储，zookeeper就是存储索引入口的（关键数据需要多份，所以需要数据同步）
+	5）hbase底层依赖zookeeper（解决数据同步）
+	6）hbase原始数据存在hdfs上
+
+
+-----------------------------hbase安装------------------------------
+
+hbase建立在zookeeper，hadoop之上
+
+必须有
+1：zookeeper
+2：hadoop
+3：jdk
+
+	
+4：修改配置文件
+     1）hbase-env.sh
+	1：修改jdk路径：export JAVA_HOME=/root/sw/jdk
+
+     	2：告诉HBase是否应该管理它自己的Zookeeper实例
+	export  HBASE_MANAGES_ZK=false
+		true：代表使用hbase自带zookeeper（这个方案只适合单机模式，不适合分布式模式）
+		false：不使用hbase自带的，使用自己安装的zookeeper
+	
+     2）hbase-site.xml，hbase的核心配置文件
+	1：需要添加zookeeper地址
+
+     4）regionservers文件，节点的主机名
+
+     5）vi backup-masters
+	这个是配置Hmaster的备份节点
+
+     6）将hadoop的hdfs-site.xml，core-site.xml放在/hbase/conf下
+	cp /root/sw/hadoop/hadoop/etc/hadoop/hdfs-site.xml .
+
+     7）将hbase的整个安装包发送到其它节点
+
+
+     8）启动
+	1）先启动zookeeper
+	2）启动hdfs
+	3）启动yarn
+     
+     9）启动hbase
+	start-hbase.sh
+	这个命令在任意节点执行，在哪个节点执行就会在哪个节点启动一个Hmaster（活跃的）
+	在hbase中可以启动多个master，只有一个是active（活跃的）的，剩下的全部是backup（备份）
+
+
+------------------------------hbase的存储和架构----------------------------
+---------hbase架构--------------
+
+主从架构：一主（Hmaster）多从（Hrogionsorver）的架构
+规划：三个节点 
+
+
+hbase的特点：面向列的nosql数据库
+	1）不支持复杂事物（行级事物）
+	2）不支持多表join，想要做多表join使用hive
+	3）hbase数据库中数据存储的格式：byte[ ]，可以存储半结构化或者非结构化（音频，视频）
+	4）habse主要用于存储结构化，（快速查询，近实时）和半结构化数据（html，xml）
+	5）hbase无模式
+	6）hbase中的数据最终存贮在hdfs上，上层的数据计算----mapreduce
+	mysql	----------	写模式：写数据的时候进行校验
+	hive	----------	读模式数据参数：读数据的时候进行校验
+	hbase	----------	无严格模式数据库
+	
+hbase存储表的特点：
+	1）大，底层存储在hdfs上，理论上存储数据无上限，千亿级别，分部署存储
+	2）面向列存储，：
+		mysql、oracle、sql server  面向行存储的，一行的数据肯定存储在一个文件中
+		hbase中面向列存储：一列（列簇）存储一个文件
+		     优点：1：提升查询性能
+			2：减少io
+			3：同一列数据类型一般相同，压缩比更大
+	3）稀疏
+		mysql中有大量的null值存在存储的时候占用存储空间
+		1）存储的结构上：hbase中null值不占存储着空间
+			hbase没有字段就插入数据，没有此列就不用管
+	4）无模式：每行都有一个可排序的主键和任意多的列，同一张表中不同的行可以有截然不同的列
+
+
+hbase相关概念：
+	行键：rowkey：一行数据的标志，类似于mysql数据库中的id，不同行的rowkey肯定不同
+	行标志，相同行的rowkey肯定相同
+	1）在hbase中行键不宜过大，通常10-100byte ，最好是16byte，涉及到存储问题
+		每个列簇的物理文件中都会存储一个rowkey   
+	2）hbase中存储的时候默认按照rowkey字典顺序进行升序排序	
+	3）在habse中对数据查询的三种方式
+	     1：全表扫描（效率低）	
+	     2：通过rowkey查询 （范围查询）指定查询某一个rowkey范围的升序排序
+	     3：查询单个rowkey的数据
+	
+
+列簇：一个或多个列
+	1）通常情况下一个表中的列簇个数不要超过三个
+	2）列簇是hbase存储的物理切分单位，面向列簇，（实际存储每个列簇存储一个文件）
+	3）什么样的列会划分带一个列簇中？具有相同io特性，通常情况会一起访问的列
+	4）没有严格的表结构 
+	5）时间戳（ 保存版本信息）
+		在数据进行插入的时候每插入一条数据自动生成一个时间戳
+		时间戳的作用记录数据的版本
+		hbase中可以存储多个版本的数据，多个版本之间靠时间戳记录
+		时间戳默认就是系统时间的时间戳，也可手动指定
+
+	6）单元格
+		某一行数据的某一列的某一个值
+		在hbase中想要定位一个单元格需要哪些：行键+列簇+时间戳
+
+
+ hbase的架构和存储：
+	寻址路径------zookeeper中
+	主从
+	主：hmaster
+	从：hregionserver
+	用于管理region	
+	region：hbase在行方向上的逻辑切分概念
+	一个hbase中的表在最开始的时候只有一个region，面向行的
+	随着数据的增加，region会进行分裂：主要目的（便于查询，建索引）
+
+
+	
+----------------------------------------------------hbase shell-------------------------------------------------
+zookeeper.sh start
+start-all.sh
+strat-hbase.sh
+hbase-daemon.sh start master
+
+1：查看表信息		
+	list
+
+2：创建表
+	create <table>, {NAME => <family>, VERSIONS => <VERSIONS>}
+	# 例如：创建表t1，有两个family name：f1，f2，且版本数均为2
+	hbase(main)> create 't1',{NAME => 'info'},{NAME => 'source'}
+	t1：表名		f1,f2,f3：column family
+	create 表名，列簇01，列簇02
+
+3：删除表
+	分两步：首先disable，然后drop
+	1）disable 't1'
+	2）drop 't1'
+
+4：查看表的结构（表的描述信息）
+	describe <table>
+
+5：修改表结构（DDL操作都要先disable）
+
+	【注】如列簇存在则是修改，不存在是添加
+	修改表结构必须先disable
+	# 语法：alter 't1', {NAME => 'f1'}, {NAME => 'f2', METHOD => 'delete'}
+	# 例如：修改表test1的cf的TTL为180天
+	hbase(main)> alter 'test1',{NAME=>'body',TTL=>'15552000'},{NAME=>'meta', TTL=>'15552000'}
+	hbase(main)> enable 'test1'	
+	1）：添加列簇
+	alter 'ttt',NAME => 'address',VERSIONS => 3
+
+	
+6：添加数据
+	put ‘表名’，‘主键（rowkey）’，‘列簇：列名’，‘value’
+	put 't1','001','f1:name','hututu'
+	
+7：扫描数据
+	scan ‘t1’
+	scan 'employee',{COLUMNS=>'info:id',LIMIT=>1}
+
+8：查询数据
+	get ‘t1（表名）’,'001（主键）'
+	get ‘t1（表名）’,'001（主键）'，‘f1:name’
+     1）查询名字
+	scan 't1',{COLUMNS => 'f1:name'}
+     2）limit只查询一条数据
+	scan 't1',{COLUMNS => 'f1:name',LIMIT => 1}
+    3）查询name和age
+	scan 't1',{COLUMNS => ['f1:name','f1:age']}
+
+9：count 计数
+
+10：删除sex
+	delete 't1','001','f1:sex'
+
+11：删除一行数据
+	deleteall 't1','001'
+
+12：删除表数据。不删除表结构
+	truncate 't1'
+
+13：列簇一旦创建不可修改名字
+
+
+------------help--------
+
+version：建表的时候不指定版本，默认1，最终保存一个版本，这个版本最新，时间戳是最大的
+	1）指定版本，3，最多保存的版本数，3个版本最新的3个版本，同一条数据的
+
+TTL：生命周期，指的是数据保存的时间，超过生命周期，数据会被自动删除
+	1）FOREVER 默认值，永久（时间以秒为单位）
+	2）TTL时间不是建表时间，是数据插入时间开始计时，针对数据 cell
+
+
+
+-----------------------------API------------------------------------
+
+13个api
+-----管理对象：
+hbaseconfiguration		hbase的配置文件对象
+habseadmin/admin		ddl操作句柄，ddl语句的管理对象
+htable/table		表数据的管理对象
+HtableDescriptor		描述对象 列簇描述对象
+HColumnDescriptor		列
+
+-----基本操作对象：
+put
+get
+delete
+scan
+
+-----结果集管理对象：
+result
+resultScanner
+key-value
+cell
+
+
+
+
